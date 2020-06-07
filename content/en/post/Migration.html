@@ -1,0 +1,558 @@
+---
+title: "Un análisis de datos de inmigración en Santiago de Chile utilizando técnicas de aprendizaje automático"
+output: html_document
+---
+
+
+
+<div id="donde-viven-los-inmigrantes-en-santiago-de-chile" class="section level1">
+<h1>Donde viven los inmigrantes en Santiago de Chile?</h1>
+<p>Hace un par de meses lleve acabo una investigación de donde viven los inmigrantes en Santiago de Chile, el informe se puede leer acá <a href="https://portugalconcopiapo.wordpress.com/2020/03/27/mapeo-de-datos-de-inmigracion-en-santiago-de-chile/" class="uri">https://portugalconcopiapo.wordpress.com/2020/03/27/mapeo-de-datos-de-inmigracion-en-santiago-de-chile/</a>. Se expone unos puntos interesantes sobre la cantidad de inmigrantes y también su ubicación cuando llegaban. Mientras estaba haciendo esa investigación me dí cuenta que había unos puntos débiles que se podría mejorar, uno de los cuales es repetir la investigación pero con datos mas actualizados. Por lo tanto, este informe investigará donde vivieran inmigrantes que llegaron en 2019. Esta vez en adición se usarán métodos de clasificación de aprendizaje automático para intentar predecir si los inmigrantes vivieran en el Sector Orriente de Santiago o no. Mas información se puede leer del Sector Oriente en <a href="###Sector-Orriente">Sector Orriente</a>.</p>
+<div id="información-de-fondo" class="section level2">
+<h2>1) Información de Fondo</h2>
+<div id="paquetes" class="section level3">
+<h3>Paquetes</h3>
+<pre class="r"><code>library(dplyr)
+library(lubridate)
+library(chilemapas)
+library(ggplot2)
+library(sf)
+library(ggspatial)
+library(caret)
+library(modelr)
+library(forcats) 
+library(caTools)</code></pre>
+<div id="base-de-datos" class="section level4">
+<h4>Base de datos</h4>
+<p>El base de datos se puede descargar en <a href="https://www.extranjeria.gob.cl/media/2020/03/visas_otorgadas_2019.xlsx" class="uri">https://www.extranjeria.gob.cl/media/2020/03/visas_otorgadas_2019.xlsx</a>. Tiene 328.118 observaciones con 14 variables. Los variables son:</p>
+<ul>
+<li><strong>Sexo</strong>: corresponde al sexo de la persona.<br />
+</li>
+<li><strong>Fecha de Nacimiento</strong>: corresponde a la fecha de nacimiento.</li>
+<li><strong>Actividad</strong>: corresponde a la actividad a la cual se dedica la persona.</li>
+<li><strong>Profesión</strong>: corresponde a la profesión.</li>
+<li><strong>País</strong>: corresponde a la nacionalidad de la persona.</li>
+<li><strong>Estudios</strong>: corresponde al nivel de instrucción formal.</li>
+<li><strong>Comuna</strong>: corresponde a la comuna de residencia que declara al momento de realizar su solicitud y no da cuenta necesariamente de la residencia actual de la persona.</li>
+<li><strong>Provincia</strong>: corresponde a la provincia asociada a la comuna de residencia que declara.</li>
+<li><strong>Región</strong>: corresponde a la región de residencia asociada a la provincia.</li>
+<li><strong>TIT-DEP</strong>: se refiere a la categoría TITULAR que corresponde al extranjero a quien se le otorga el permiso de residencia, y a la categoría de DEPENDIENTE que corresponde a la familia directa del extranjero que posee la residencia.</li>
+<li><strong>AUT</strong>: corresponde a la Autoridad migratoria que recibe la solicitud de residencia.</li>
+<li><strong>Beneficio_Agrupado</strong>: corresponde a las categorías de visa expuestas anteriormente y en el caso de las permanencias definitivas, corresponde al registro de dicho permiso migratorio.</li>
+<li><strong>Año</strong>: se refiere al año eu que se otorga el permiso migratorio.</li>
+<li><strong>Mes</strong>: se refiere al mes en que se otorga el permiso migratorio.</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="limpieza-de-los-datos" class="section level2">
+<h2>2) Limpieza de Los Datos</h2>
+<div id="cargar-el-base-de-datos" class="section level4">
+<h4>Cargar el base de datos</h4>
+<p>Primero cargué el base de datos, y lo filtré para solo tener resultados para Metropolitana de Santiago. Es importante tener en cuenta acá que las comunas de San Bernado y Puente Alto no se inlcuyen en este analisis ya que forman partes de otros provincias, y no la de Santiago.</p>
+<pre class="r"><code>setwd(&quot;~/Documents/Machine Learning/4. Proyectos/Migration/Data Sets&quot;)
+
+visas2019 &lt;- read.csv(&quot;visas_otorgadas_2019.csv&quot;)
+
+visas2019STG &lt;- visas2019 %&gt;% filter(REGIÓN == &quot;Metropolitana de Santiago&quot;) 
+
+visas2019STG &lt;- visas2019STG %&gt;% filter(PROVINCIA == &#39;Santiago&#39;)</code></pre>
+<div id="limpieza-de-los-datos-1" class="section level5">
+<h5>Limpieza de los datos</h5>
+<p>Empecé con una limpieza para preparar los datos. Específicamente hice los pasos siguientes:</p>
+<ul>
+<li>Revisé si había valores faltantes</li>
+<li>Usé el variable de Nacimiento para calcular la edad de cada inmigrante.</li>
+<li>Agregué coordenadas geográficas al base de datos.</li>
+</ul>
+</div>
+<div id="valores-faltantes" class="section level5">
+<h5>Valores faltantes</h5>
+<p>Analicé cada variable individualmente en una tabla para ver si habían observaciones con valores faltantes. Se muestró que varios variables tenia una categoría de ‘No Informa’ ya incluida. Sin embargo un variable TIT-DEP tiene 15902 observaciones sin un valor. En linea con los otros variables que incluyen la categoría de ‘No informa’, ingresé ‘No informa’ para esas 15902 observaciones.</p>
+<pre class="r"><code>table(visas2019STG$ACTIVIDAD) 
+      
+table(visas2019STG$PROFESIÓN) 
+            
+table(visas2019STG$ESTUDIOS) 
+
+table(visas2019STG$TIT_DEP)
+
+levels(visas2019STG$TIT_DEP)
+
+levels(visas2019STG$TIT_DEP)[1] &lt;- &quot;No Informa&quot;
+
+table(visas2019STG$TIT_DEP)</code></pre>
+<p>Ahora voy a borrar los observaciones que tienen valores de “No Informa” para cualquiera de los variables.</p>
+<pre class="r"><code>visas2019STG &lt;- visas2019STG %&gt;% filter(!ACTIVIDAD == &quot;No Informa&quot; ) %&gt;% filter(!PROFESIÓN == &quot;No Informa&quot;) %&gt;% filter(!ESTUDIOS == &quot;No Informa&quot;) %&gt;% filter(!TIT_DEP == &quot;No Informa&quot;)</code></pre>
+</div>
+<div id="fecha-de-nacimiento" class="section level5">
+<h5>Fecha de nacimiento</h5>
+<p>Quise convertir la fecha de nacimiento a edad. Para hacer esto usé el paquete <strong>lubridate</strong>.</p>
+<pre class="r"><code>visas2019STG$NACIMIENTO &lt;- as.Date(visas2019STG$NACIMIENTO)
+
+year &lt;- 2020
+
+Birth_year &lt;- year(visas2019STG$NACIMIENTO)
+
+visas2019STG &lt;- visas2019STG %&gt;% mutate(Age = year - Birth_year)</code></pre>
+</div>
+<div id="las-coordinados" class="section level5">
+<h5>Las Coordinados</h5>
+<p>Le agregé coordenadas geográficas al base de datos para que después pudiera trazar mi analysis. Se usaba el paquete de <strong>Chile Mapas</strong> que tiene las coordenadas para cada comuna en Chile.</p>
+<pre class="r"><code>Chile &lt;- chilemapas::codigos_territoriales
+STG &lt;- Chile %&gt;% filter(nombre_provincia == &#39;Santiago&#39;)
+Comunas &lt;- chilemapas::mapa_comunas
+STGgeo &lt;- left_join(STG, Comunas)</code></pre>
+<pre><code>## Joining, by = c(&quot;codigo_comuna&quot;, &quot;codigo_provincia&quot;, &quot;codigo_region&quot;)</code></pre>
+<p>STGgeo tiene los nombres de cada comuna en Santiago y sus coordinados. Cobiné estos coordinados con el base de datos visas2019STG. Pero primero tuve que cambiar el nombre de COMUNA a comuna_name para que se reflejara el nombre de ese variable en STGgeo. Tambien tuve que cambiar como se escriben los nombres de algunos comunas que llevaban tildes, para que se escribieran igual en STGgeo y visas2019STG.</p>
+<div id="cambiar-el-nombre-de-comuna" class="section level7">
+<p>Cambiar el nombre de COMUNA</p>
+<pre class="r"><code>visas2019STG &lt;- visas2019STG %&gt;% rename(nombre_comuna = COMUNA)</code></pre>
+</div>
+<div id="cambiar-nombre_comuna-a-un-factor" class="section level7">
+<p>Cambiar nombre_comuna a un factor</p>
+<pre class="r"><code>visas2019STG$nombre_comuna &lt;- as.factor(visas2019STG$nombre_comuna)</code></pre>
+</div>
+<div id="cambiar-los-nombres-de-comunas-que-llevan-tildes" class="section level7">
+<p>Cambiar los nombres de comunas que llevan tildes</p>
+<pre class="r"><code>STGgeo[4, 2] = &quot;Conchalí&quot;
+STGgeo[6, 2] = &quot;Estación Central&quot;
+STGgeo[19, 2] = &quot;Maipú&quot;
+STGgeo[20, 2] = &quot;Ñuñoa&quot;
+STGgeo[22, 2] = &quot;Peñalolén&quot;
+STGgeo[29, 2] = &quot;San Joaquín&quot;
+STGgeo[31, 2] = &quot;San Ramón&quot;</code></pre>
+<p>Combiné STGgeo con visas2019STG, y le di al nuevo base de datos el mismo nombre visas2019STG.</p>
+<pre class="r"><code>visas2019STG &lt;- left_join(visas2019STG, STGgeo)</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div id="analysis-inicial" class="section level2">
+<h2>3) Analysis Inicial</h2>
+<div id="nacionalidades" class="section level4">
+<h4>Nacionalidades</h4>
+<p>Los datos originales muestran que en 2019 en la provincia de Santiago 156.260 inmigrantes llegaron. Estos inmigrantes se dividían en 76 nacionalidades</p>
+<p>Sin embargo, cuando filtré los datos, usando los pasos anteriores, esta cifra se reducía a 98.655 divididos en 76 nacionalidades. Venezolanos represetan 58.80% con 58.009 llegadas. En los 10 principales países para llegadas, 8 son de Sudamérica o Centroamérica, con China y Los Estados Unidos las únicas excepciónes. También se nota que 6 de esos 10 países hablan Español, con Brasil, Haiti, Los Estados Unidos y China los que hablan otros idiomas.</p>
+<pre class="r"><code>visas2019STG %&gt;% group_by(PAÍS) %&gt;% count() %&gt;% arrange(-n)</code></pre>
+<pre><code>## # A tibble: 75 x 2
+## # Groups:   PAÍS [75]
+##    PAÍS               n
+##    &lt;fct&gt;          &lt;int&gt;
+##  1 Venezuela      58009
+##  2 Perú           11474
+##  3 Colombia        8465
+##  4 Haití           7135
+##  5 Bolivia         2424
+##  6 Ecuador         2119
+##  7 Argentina       1988
+##  8 Brasil          1335
+##  9 China            923
+## 10 Estados Unidos   564
+## # … with 65 more rows</code></pre>
+</div>
+<div id="donde-viven" class="section level4">
+<h4>Donde viven</h4>
+<p>Se expone que la comuna mas popular es Santiago con 30.207 inmigrantes en 2019. Esto no es soprendiente ya que Santiago es el centro de la ciudad, donde hay más accesso a servicios, oportunidades de trabajo, y alojamiento. Sin embargo hay que tener en cuenta que este base de datos solo muestra la comuna de residencia al momento de realizar su solicitud para su visa. Es posible que un inmigrante se mueva a un sector diferente de la ciudad cuando se haya acostumbrado y ya tenga un red de apoyo.</p>
+<pre class="r"><code>comuna_count &lt;- visas2019STG %&gt;% group_by(nombre_comuna) %&gt;% count() %&gt;% arrange(-n)
+
+comuna_count</code></pre>
+<pre><code>## # A tibble: 32 x 2
+## # Groups:   nombre_comuna [32]
+##    nombre_comuna        n
+##    &lt;chr&gt;            &lt;int&gt;
+##  1 Santiago         30207
+##  2 Estación Central  8080
+##  3 Independencia     7291
+##  4 Quinta Normal     4343
+##  5 San Miguel        4124
+##  6 Recoleta          3871
+##  7 Ñuñoa             3736
+##  8 Las Condes        3591
+##  9 La Florida        3571
+## 10 Maipú             2780
+## # … with 22 more rows</code></pre>
+<p>Le agregé estos cifras al STGgeo para poder crear un mapa con el paquete ggplot que se matizaba según la cantidad de inmigrantes en cada comuna. Tambien calculé el punto al medio de cada comuna y le agregé al <strong>STGgeo</strong>.</p>
+<pre class="r"><code>STGgeo &lt;- left_join(STGgeo, comuna_count, by = &quot;nombre_comuna&quot;)
+
+STGgeo &lt;- STGgeo %&gt;% rename(number_inmigrantes = n)</code></pre>
+<pre class="r"><code>STGgeo &lt;- cbind(STGgeo, st_coordinates(st_centroid(STGgeo$geometry)))</code></pre>
+<pre><code>## Warning in st_centroid.sfc(STGgeo$geometry): st_centroid does not give correct
+## centroids for longitude/latitude data</code></pre>
+<pre class="r"><code>labels &lt;- seq(1,32)</code></pre>
+</div>
+</div>
+<div id="mapas-de-ubicación" class="section level2">
+<h2>4) Mapas de Ubicación</h2>
+<p>En esta secćion se presentan cuatro mapas.</p>
+<p>Mapa 4.1 muestra la distribućion a lo largo de Santiago de todos los inmigrantes qye llegaron en 2019.</p>
+<p>Mapa 4.2 muestra la distribućion de inmigrantes venezolanos.</p>
+<p>Mapa 4.3 muestra la distribućion de inmigrantes haitianos.</p>
+<p>Mapa 4.4 muestra la distribućion de inmigrantes de Los Estados Unidos.</p>
+<p>Mapa 4.5 muestra la distribućion de inmigrantes peruanos.</p>
+<p>Estos cuatros nacionalidades se les eligieron ya que toman un papel importante en patrones de inmigración en Santiago. Ha sido un gran aumento en la cantidad de Venezolanos en los ultimos años por la situacion en su propio país. Tambien en los ultimos años Santiago ha experimentado un gran aumento en inmigrantes haitianos. Los peruanos son la nacionalidad que historicamente ha sido la mayor contribuente de inmigrantes en Chile. Los Estados Unidos es el país con el mas grande producto interno bruto per cápita entre las 10 principales nacionalidades de inmigrantes que llegaron a Santiago en 2019, así que es interesante ver su distribución por Santiago. Las cifras de PIB per cápita (World Bank, 2018) se muestra en $US a continuación.</p>
+<p>Los Estados Unidos = 62.887
+Perú = $6.941
+Colombia = $6.668
+Haití = $868.3
+Bolivia = $3.549
+Ecuador = $6.345
+Argentina = $11.684
+Brasil = $9.001
+China = $9.771</p>
+<p>Por comparision el PIB per cápita de Chile es $15.923.</p>
+<div id="distribución-de-todos-los-inmigrantes" class="section level4">
+<h4>Distribución de todos los inmigrantes</h4>
+<pre class="r"><code>ggplot() + geom_sf(data = STGgeo$geometry, aes(fill = STGgeo$number_inmigrantes)) + 
+scale_fill_viridis_c(option = &quot;inferno&quot;,trans = &#39;sqrt&#39;) +
+geom_text(data = STGgeo, aes(X, Y, label = labels), size = 3, color = &quot;white&quot;) +
+annotation_north_arrow(aes(which_north = &quot;true&quot;, location = &quot;br&quot;), pad_y = unit(0.8, &quot;cm&quot;)) +
+  annotation_scale(aes(location = &quot;br&quot;, style = &quot;bar&quot;)) +
+  theme(panel.grid.major = element_line(color = gray(0.5), linetype = &quot;dashed&quot;)) +
+  theme (panel.background = element_rect(fill = &quot;light grey&quot;)) +
+  ggtitle(&quot;Ubicacion de Inmigrantes que llegaron en 2019&quot;) + xlab(&quot;Longitude&quot;) + ylab(&quot;Latitude&quot;) +
+  labs(fill = &quot;Numero&quot;)</code></pre>
+<p><img src="/en/post/Migration_files/figure-html/unnamed-chunk-15-1.png" width="672" /></p>
+</div>
+<div id="distribución-de-los-venezolanos" class="section level4">
+<h4>Distribución de los venezolanos</h4>
+<p>En este mapa se expone que los venezolanos se concentran con 21.387 en la comuna de Santiago. Esta cifra corresponde a 36.88% de los venezolanos que llegaron en 2019. Estacion Central y Independencia son las comunas con el segundo y el tercer mayor número de llegadas venezolanos. En relación al sector orriente, hubieron 1.998 llegadas venezolanos.</p>
+<pre class="r"><code>venezuela_count &lt;- visas2019STG %&gt;% filter(PAÍS == &#39;Venezuela&#39;) %&gt;% group_by(nombre_comuna) %&gt;% count() %&gt;% arrange(-n)
+
+venezuela_count</code></pre>
+<pre><code>## # A tibble: 32 x 2
+## # Groups:   nombre_comuna [32]
+##    nombre_comuna        n
+##    &lt;chr&gt;            &lt;int&gt;
+##  1 Santiago         21387
+##  2 Estación Central  5628
+##  3 Independencia     4710
+##  4 San Miguel        3318
+##  5 Quinta Normal     2805
+##  6 Ñuñoa             2622
+##  7 La Florida        2339
+##  8 Macul             1575
+##  9 Maipú             1537
+## 10 La Cisterna       1237
+## # … with 22 more rows</code></pre>
+<pre class="r"><code>visas2019STG %&gt;% filter(PAÍS == &#39;Venezuela&#39; &amp; nombre_comuna %in% c(&#39;Providencia&#39;, &quot;Las Condes&quot;, &#39;Vitacura&#39;, &#39;Lo Barnechea&#39;)) %&gt;% count()</code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1  1998</code></pre>
+<pre class="r"><code>STGgeo &lt;- left_join(STGgeo, venezuela_count, by = &quot;nombre_comuna&quot;)
+
+STGgeo &lt;- STGgeo %&gt;% rename(numero_venezuelanos = n)</code></pre>
+<pre class="r"><code>ggplot() + geom_sf(data = STGgeo$geometry, aes(fill = STGgeo$numero_venezuelanos)) + 
+scale_fill_viridis_c(option = &quot;inferno&quot;,trans = &#39;sqrt&#39;) +
+geom_text(data = STGgeo, aes(X, Y, label = labels), size = 3, color = &quot;white&quot;) +
+annotation_north_arrow(aes(which_north = &quot;true&quot;, location = &quot;br&quot;), pad_y = unit(0.8, &quot;cm&quot;)) +
+  annotation_scale(aes(location = &quot;br&quot;, style = &quot;bar&quot;)) +
+  theme(panel.grid.major = element_line(color = gray(0.5), linetype = &quot;dashed&quot;)) +
+  theme (panel.background = element_rect(fill = &quot;light grey&quot;)) +
+  ggtitle(&quot;Ubicacion de Inmigrantes Venezolanos que llegaron en 2019&quot;) + xlab(&quot;Longitude&quot;) + ylab(&quot;Latitude&quot;) +
+  labs(fill = &quot;Numero&quot;)</code></pre>
+<p><img src="/en/post/Migration_files/figure-html/unnamed-chunk-18-1.png" width="672" /></p>
+</div>
+<div id="distribución-de-los-haitianos" class="section level4">
+<h4>Distribución de los haitianos</h4>
+<p>Este mapa destaca que la comuna mas popular para haitianos de 2019 fue Quilicura con 984 llegadas, o sea 13.79% del 7.135 haitianos que llegaron en 2019. Estación Central tambien contó con muchos haitianos con 758 haitianos (10.62%), asímismo Santiago Centro tuvo muchos llegados haitianos con 523 (7.33%). Es interesante anotar la falta de haitianos en el sector oriente con solo 25 haitianos de los que llegaron en 2019.</p>
+<pre class="r"><code>haitiano_count &lt;- visas2019STG %&gt;% filter(PAÍS == &#39;Haití&#39;) %&gt;% group_by(nombre_comuna) %&gt;% count() %&gt;% arrange(-n)
+
+visas2019STG %&gt;% filter(PAÍS == &#39;Haití&#39;) %&gt;% count()</code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1  7135</code></pre>
+<pre class="r"><code>haitiano_count</code></pre>
+<pre><code>## # A tibble: 32 x 2
+## # Groups:   nombre_comuna [32]
+##    nombre_comuna           n
+##    &lt;chr&gt;               &lt;int&gt;
+##  1 Quilicura             984
+##  2 Estación Central      758
+##  3 Santiago              523
+##  4 Lo Espejo             426
+##  5 Recoleta              375
+##  6 Pedro Aguirre Cerda   367
+##  7 Cerro Navia           363
+##  8 Conchalí              280
+##  9 Quinta Normal         252
+## 10 El Bosque             248
+## # … with 22 more rows</code></pre>
+<pre class="r"><code>visas2019STG %&gt;% filter(PAÍS == &#39;Haití&#39; &amp; nombre_comuna %in% c(&#39;Providencia&#39;, &quot;Las Condes&quot;, &#39;Vitacura&#39;, &#39;Lo Barnechea&#39;)) %&gt;% count()</code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1    25</code></pre>
+<pre class="r"><code>STGgeo &lt;- left_join(STGgeo, haitiano_count, by = &quot;nombre_comuna&quot;)
+
+STGgeo &lt;- STGgeo %&gt;% rename(numero_haitianos = n)</code></pre>
+<pre class="r"><code>ggplot() + geom_sf(data = STGgeo$geometry, aes(fill = STGgeo$numero_haitianos)) + 
+scale_fill_viridis_c(option = &quot;inferno&quot;,trans = &#39;sqrt&#39;) +
+geom_text(data = STGgeo, aes(X, Y, label = labels), size = 3, color = &quot;white&quot;) +
+annotation_north_arrow(aes(which_north = &quot;true&quot;, location = &quot;br&quot;), pad_y = unit(0.8, &quot;cm&quot;)) +
+  annotation_scale(aes(location = &quot;br&quot;, style = &quot;bar&quot;)) +
+  theme(panel.grid.major = element_line(color = gray(0.5), linetype = &quot;dashed&quot;)) +
+  theme (panel.background = element_rect(fill = &quot;light grey&quot;)) +
+  ggtitle(&quot;Ubicacion de Inmigrantes haitianos que llegaron en 2019&quot;) + xlab(&quot;Longitude&quot;) + ylab(&quot;Latitude&quot;) +
+  labs(fill = &quot;Numero&quot;)</code></pre>
+<p><img src="/en/post/Migration_files/figure-html/unnamed-chunk-21-1.png" width="672" /></p>
+</div>
+<div id="distribución-de-los-estadounidenses" class="section level4">
+<h4>Distribución de los estadounidenses</h4>
+<p>De los 564 estado unidenses que llegaron en 2019, 352 (62.41%) vivieron en el sector orriente. Como para los venezolanos y haitianos la comuna de Santiago Centro otro vez contó con un gran por ceinto de las llegadas con 80 personas (14.18%). Tambien es interesante ver que hay varios comunas donde no había llegadas de los estados unidos. En comparación a lo que hemos visto hasta ahora con los venezolanos y los haitanos esta es una tendencia nueva, con estos dos otros nacionalidades teniendo una presencia en cada comuna de la ciudad.</p>
+<pre class="r"><code>eeuu_count &lt;- visas2019STG %&gt;% filter(PAÍS == &#39;Estados Unidos&#39;) %&gt;% group_by(nombre_comuna) %&gt;% count() %&gt;% arrange(-n)
+
+eeuu_count</code></pre>
+<pre><code>## # A tibble: 23 x 2
+## # Groups:   nombre_comuna [23]
+##    nombre_comuna        n
+##    &lt;chr&gt;            &lt;int&gt;
+##  1 Providencia        208
+##  2 Las Condes         110
+##  3 Santiago            80
+##  4 Maipú               57
+##  5 Ñuñoa               30
+##  6 Vitacura            21
+##  7 Lo Barnechea        13
+##  8 Estación Central    11
+##  9 Macul                5
+## 10 Independencia        4
+## # … with 13 more rows</code></pre>
+<pre class="r"><code>visas2019STG %&gt;% filter(PAÍS == &#39;Estados Unidos&#39;) %&gt;% count() </code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1   564</code></pre>
+<pre class="r"><code>visas2019STG %&gt;% filter(PAÍS == &#39;Estados Unidos&#39; &amp; nombre_comuna %in% c(&#39;Providencia&#39;, &quot;Las Condes&quot;, &#39;Vitacura&#39;, &#39;Lo Barnechea&#39;)) %&gt;% count()</code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1   352</code></pre>
+<pre class="r"><code>STGgeo &lt;- left_join(STGgeo, eeuu_count, by = &quot;nombre_comuna&quot;)
+
+STGgeo &lt;- STGgeo %&gt;% rename(numero_eeuu = n)</code></pre>
+<pre class="r"><code>ggplot() + geom_sf(data = STGgeo$geometry, aes(fill = STGgeo$numero_eeuu)) + 
+scale_fill_viridis_c(option = &quot;inferno&quot;,trans = &#39;sqrt&#39;) +
+geom_text(data = STGgeo, aes(X, Y, label = labels), size = 3, color = &quot;white&quot;) +
+annotation_north_arrow(aes(which_north = &quot;true&quot;, location = &quot;br&quot;), pad_y = unit(0.8, &quot;cm&quot;)) +
+  annotation_scale(aes(location = &quot;br&quot;, style = &quot;bar&quot;)) +
+  theme(panel.grid.major = element_line(color = gray(0.5), linetype = &quot;dashed&quot;)) +
+  theme (panel.background = element_rect(fill = &quot;light grey&quot;)) +
+  ggtitle(&quot;Ubicacion de Inmigrantes de Los Estados Unidos que llegaron en 2019&quot;) + xlab(&quot;Longitude&quot;) + ylab(&quot;Latitude&quot;) +
+  labs(fill = &quot;Numero&quot;)</code></pre>
+<p><img src="/en/post/Migration_files/figure-html/unnamed-chunk-24-1.png" width="672" /></p>
+</div>
+<div id="distribución-de-los-peruanos" class="section level4">
+<h4>Distribución de los peruanos</h4>
+<p>Sanitago Centro, Recoleta, y Independencia fueron las tres comunas con llegadas de inmigrantes peruanos en 2019 con 2.785 (24.27%), 1.272 (11.09%), y 1.092 (9.51%) respectivamente. Se contaron 855 (7.45%) peruanos en el sector orriente.</p>
+<pre class="r"><code>peruano_count &lt;- visas2019STG %&gt;% filter(PAÍS == &#39;Perú&#39;) %&gt;% group_by(nombre_comuna) %&gt;% count() %&gt;% arrange(-n)
+
+visas2019STG %&gt;% filter(PAÍS == &#39;Perú&#39;) %&gt;% count()</code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1 11474</code></pre>
+<pre class="r"><code>visas2019STG %&gt;% filter(PAÍS == &#39;Perú&#39; &amp; nombre_comuna %in% c(&#39;Providencia&#39;, &quot;Las Condes&quot;, &#39;Vitacura&#39;, &#39;Lo Barnechea&#39;)) %&gt;% count()</code></pre>
+<pre><code>## # A tibble: 1 x 1
+##       n
+##   &lt;int&gt;
+## 1   855</code></pre>
+<pre class="r"><code>peruano_count</code></pre>
+<pre><code>## # A tibble: 32 x 2
+## # Groups:   nombre_comuna [32]
+##    nombre_comuna        n
+##    &lt;chr&gt;            &lt;int&gt;
+##  1 Santiago          2785
+##  2 Recoleta          1272
+##  3 Independencia     1092
+##  4 Estación Central   634
+##  5 Quinta Normal      585
+##  6 Conchalí           475
+##  7 Peñalolén          415
+##  8 Las Condes         373
+##  9 La Florida         335
+## 10 Lo Prado           320
+## # … with 22 more rows</code></pre>
+<pre class="r"><code>STGgeo &lt;- left_join(STGgeo, peruano_count, by = &quot;nombre_comuna&quot;)
+
+STGgeo &lt;- STGgeo %&gt;% rename(numero_peruanos = n)</code></pre>
+<pre class="r"><code>ggplot() + geom_sf(data = STGgeo$geometry, aes(fill = STGgeo$numero_peruanos)) + 
+scale_fill_viridis_c(option = &quot;inferno&quot;,trans = &#39;sqrt&#39;) +
+geom_text(data = STGgeo, aes(X, Y, label = labels), size = 3, color = &quot;white&quot;) +
+annotation_north_arrow(aes(which_north = &quot;true&quot;, location = &quot;br&quot;), pad_y = unit(0.8, &quot;cm&quot;)) +
+  annotation_scale(aes(location = &quot;br&quot;, style = &quot;bar&quot;)) +
+  theme(panel.grid.major = element_line(color = gray(0.5), linetype = &quot;dashed&quot;)) +
+  theme (panel.background = element_rect(fill = &quot;light grey&quot;)) +
+  ggtitle(&quot;Ubicacion de Inmigrantes Peruanos que llegaron en 2019&quot;) + xlab(&quot;Longitude&quot;) + ylab(&quot;Latitude&quot;) +
+  labs(fill = &quot;Numero&quot;)</code></pre>
+<p><img src="/en/post/Migration_files/figure-html/unnamed-chunk-27-1.png" width="672" /></p>
+<p>Ahora ya que se han explorado los datos y se han visto la distribucion de cuatro nacionalidades a lo largo de la ciudad, voy a crear un modelo de classificación.</p>
+</div>
+</div>
+<div id="modelo-de-clasificación" class="section level2">
+<h2>5) Modelo de Clasificación</h2>
+<p>La idea de esta sección es crear un modelo de clasificación para predecir en cual comuna un inmigrante viviera cuando llegara a Santiago de Chile. Primero he elegido los vaiables de visas2019STG que quiero usar.</p>
+<pre class="r"><code>visas2019STGfilter &lt;- visas2019STG %&gt;% select(SEXO, PAÍS, ACTIVIDAD, PROFESIÓN, ESTUDIOS, nombre_comuna, AÑO, MES, Age)</code></pre>
+<div id="sector-orriente" class="section level4">
+<h4>Sector Orriente</h4>
+<p>Despues de eso he manipulado el variable de nombre_comuna para crear sector_orriente, que va a ser el variable dependiente, es decir, el variable que el modelo va a classificar. A puesto que solo tiene dos niveles (1 o 0) es un variable binomial. 1 significa que un inmigrante vive en el sector orriente, y 0 significa que vive en un parte differente de la ciudad.</p>
+<pre class="r"><code>visas2019STGfilter$SECTOR_ORRIENTE &lt;- if_else(visas2019STGfilter$nombre_comuna == &#39;Providencia&#39;, 1,
+                                 if_else(visas2019STGfilter$nombre_comuna == &#39;Las Condes&#39;, 1, 
+                                         if_else(visas2019STGfilter$nombre_comuna == &#39;Vitacura&#39;, 1,
+                                                 if_else(visas2019STGfilter$nombre_comuna ==&#39;Lo Barnechea&#39;, 1, 0))))</code></pre>
+</div>
+<div id="que-es-el-sector-orriente" class="section level4">
+<h4>Que es el sector orriente?</h4>
+<p>El sector orriente contiene es las comunas de Providencia, Las Condes, Viacura, y Lo Barnechea y se queda al norte orriente de la ciudad. Estas comunas se consideran ser las mas ricas con las mejores calidades de vida. Se destacan las cuatros comunas en el mapa de abajo.</p>
+<pre class="r"><code>SectorOriente &lt;- STGgeo %&gt;% filter(nombre_comuna == &#39;Providencia&#39; | nombre_comuna == &#39;Las Condes&#39; | nombre_comuna == &#39;Vitacura&#39; | nombre_comuna == &#39;Lo Barnechea&#39;)
+
+ggplot() + geom_sf(data = STGgeo$geometry, fill = &quot;white&quot;) + 
+  geom_sf(data = SectorOriente$geometry, fill = &quot;purple&quot;) +
+geom_text(data = STGgeo, aes(X, Y, label = labels), size = 3, color = &quot;white&quot;) +
+annotation_north_arrow(aes(which_north = &quot;true&quot;, location = &quot;br&quot;), pad_y = unit(0.8, &quot;cm&quot;)) +
+  annotation_scale(aes(location = &quot;br&quot;, style = &quot;bar&quot;)) +
+  theme(panel.grid.major = element_line(color = gray(0.5), linetype = &quot;dashed&quot;)) +
+  theme (panel.background = element_rect(fill = &quot;light grey&quot;)) +
+  ggtitle(&quot;Ubicacion del Sector Orriente&quot;) + xlab(&quot;Longitude&quot;) + ylab(&quot;Latitude&quot;)</code></pre>
+<p><img src="/en/post/Migration_files/figure-html/unnamed-chunk-30-1.png" width="672" /></p>
+</div>
+<div id="one-hot-encoding" class="section level4">
+<h4>One Hot Encoding</h4>
+<p>En el base de datos hay varios variables categóricos. One Hot Encoding es un proceso que se usa para convertir estos variables categóricos en una forma que es mas facil para computar para modelos de aprendizaje automatico.</p>
+<p>Básicamente, cuando se aplica one hot encoding a variables categóricas, se crean nuevas columnas, una para cada nivel de las variable. Por ejemplo, si la variable es sexo, se crearían dos columnas más, una que se llamaría <em>Hombre</em> y la segunda que se llamaría <em>Mujer</em>. La columna para hombres tiene 1 anotado para todas las observaciones que son hombres y 0 para todas las que no son hombres. Asimismo, la columna para las mujeres tiene 1 anotado para todas las variables que son mujeres y 0 para todas las que no son mujeres.</p>
+<p>Básicamente, la variable de sexo se ha dividido entre dos, una que dice sí o no en relación con la pregunta de si uno es hombre y la otra que responde a la misma pregunta, pero para las mujeres. De esta manera, utilizando valores numéricos en lugar de categorías, el modelo puede mejorar sus predicciones y ejecutarse mas rapidamente.</p>
+<p>He llevado a cabo one hot encoding para los variables de SEXO, ACTIVIDAD, y ESTUDIOS.</p>
+<div id="sexo" class="section level5">
+<h5>SEXO</h5>
+<pre class="r"><code>model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~SEXO-1)
+
+visas2019STGfilter &lt;- cbind(visas2019STGfilter, model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~SEXO-1))</code></pre>
+</div>
+<div id="actividad" class="section level5">
+<h5>ACTIVIDAD</h5>
+<pre class="r"><code>model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~ACTIVIDAD-1)
+
+visas2019STGfilter &lt;- cbind(visas2019STGfilter, model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~ACTIVIDAD-1))</code></pre>
+</div>
+<div id="estudios" class="section level5">
+<h5>ESTUDIOS</h5>
+<pre class="r"><code>model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~ESTUDIOS-1)
+
+visas2019STGfilter &lt;- cbind(visas2019STGfilter, model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~ESTUDIOS-1))</code></pre>
+</div>
+<div id="país-a-continentes" class="section level5">
+<h5>PAÍS a Continentes</h5>
+<p>Hasta ahora el base de datos tiene el país de cada inmigrante recopilado. En total hay 75 países, esta cantidad de niveles le hace dificil al modelo funcionar bien. Por lo tanto voy a agrupar los países por su continente antes de hacer el one hot encoding.</p>
+<pre class="r"><code>visas2019STGfilter$continente &lt;- fct_collapse(visas2019STGfilter$PAÍS, Europe = c(&#39;Alemania&#39;, &#39;Austria&#39;, &#39;Bélgica&#39;, &#39;Bulgaria&#39;, &#39;Croacia&#39;, &#39;Dinamarca&#39;, &#39;Eslovaquia&#39;, &#39;España&#39;, &#39;Finlandia&#39;,
+                                                 &#39;Francia&#39;, &#39;Grecia&#39;, &#39;Holanda&#39;, &#39;Hungría&#39;, &#39;Inglaterra&#39;, &#39;Irlanda&#39;, &#39;Italia&#39;, &#39;Lituania&#39;, &#39;Noruega&#39;, 
+                                                 &#39;Polonia&#39;, &#39;Portugal&#39;, &#39;República Checa&#39;, &#39;República De Bielorrusia&#39;, &#39;República De Serbia&#39;,
+                                                 &#39;Rumanía&#39;, &#39;Rusia&#39;, &#39;Suecia&#39;, &#39;Suiza&#39;, &#39;Ucrania&#39;), Africa = c(&#39;Angola&#39;, &#39;Camerún&#39;, &#39;Egipto&#39;, &#39;Marruecos&#39;, &#39;República de Congo&#39;, &#39;Sudráfica&#39;), 
+             Asia = c(&#39;Bangladesh&#39;, &#39;Corea del Sur&#39;, &#39;China&#39;, &#39;Filipinas&#39;, &#39;India&#39;, &#39;Indonesia&#39;, &#39;Irán&#39;, &#39;Israel&#39;, &#39;Japón&#39;,
+                      &#39;Jordania&#39;, &#39;Líbano&#39;, &#39;Malasia&#39;, &#39;Nepal&#39;, &#39;Pakistán&#39;, &#39;Palestina&#39;, &#39;Siria&#39;, &#39;Tailandia&#39;, &#39;Taiwan&#39;, &#39;Turquía&#39;),
+             SouthAmerica = c(&#39;Argentina&#39;, &#39;Bolivia&#39;, &#39;Brasil&#39;, &#39;Colombia&#39;, &#39;Ecuador&#39;, &#39;Paraguay&#39;, &#39;Perú&#39;, &#39;Uruguay&#39;, &#39;Venezuela&#39;), 
+             CentralAmerica = c(&#39;Costa Rica&#39;, &#39;Cuba&#39;, &#39;El Salvador&#39;, &#39;Guatemala&#39;, &#39;Haití&#39;, &#39;Honduras&#39;, &#39;México&#39;, &#39;Nicaragua&#39;, &#39;Panamá&#39;,&#39;República Dominicana&#39;), 
+             NorthAmerica = c(&#39;Canadá&#39;, &#39;Estados Unidos&#39;), Other = c(&#39;Otro país&#39;), 
+             Oceania = c(&#39;Australia&#39;, &#39;Nueva Zelanda&#39;))</code></pre>
+<pre class="r"><code>visas2019STGfilter &lt;- cbind(visas2019STGfilter, model_matrix(visas2019STGfilter, SECTOR_ORRIENTE~continente-1))
+
+head(visas2019STGfilter)</code></pre>
+</div>
+</div>
+<div id="creando-el-modelo" class="section level4">
+<h4>Creando el Modelo</h4>
+<p>En aprendizaje automatico es importante dividir los datos en dos grupos. Uno con la mayoria de los observaciones para entrenar el modelo, y el otro con los observaciones que quedan para ensayar el modelo. Por lo tanto he dividido el base en dos grupos, un grupo que tiene 75% de las observaciones para entrenar el modelo, y el segundo grupo que tiene 25% para ensayar el modelo.</p>
+<pre class="r"><code>split &lt;- sample.split(visas2019STGfilter$SECTOR_ORRIENTE, SplitRatio = 0.75)
+training_set &lt;- subset(visas2019STGfilter, split == TRUE)
+test_set &lt;- subset(visas2019STGfilter, split == FALSE)</code></pre>
+<pre class="r"><code>training_set_cut &lt;- training_set[,c(-1, -2, -3, -4, -5, -6, -7, -8, -9, -34)]
+
+test_set_cut &lt;- test_set[,c(-1, -2, -3, -4, -5, -6, -7, -8, -9, -34)]</code></pre>
+</div>
+<div id="entrenar-modelo" class="section level4">
+<h4>Entrenar Modelo</h4>
+<p>Para este modelo he usado un ‘modelo lineal generalizado’ (glm). En futuros informes, llevaré a cabo esta investigación con otros tipos de modelos con comparación para ver qué tipo de modelo ofrece las mejores predicciones.</p>
+<pre class="r"><code>set.seed(1234)
+classifier = glm(formula = SECTOR_ORRIENTE ~.,
+                  family = binomial,
+                  data = training_set_cut)</code></pre>
+</div>
+<div id="predicciones" class="section level4">
+<h4>Predicciones</h4>
+<p>He usado el modelo (classifier) para generar predicciones para el grupo de prueba. Las predicciones son entre 0 y 1. Si es &gt;= 0.5 se classificaría como 1 y que vive en el sector orriente y si es &lt; 0.5 se classificarían como 0 y que no viven en el sector orriente. Para mostrar la precisión del modelo he usado una matriz de confusión.</p>
+<pre class="r"><code>prob_pred &lt;- predict(classifier, type = &#39;response&#39;, newdata = test_set_cut[,c(-1)])</code></pre>
+<pre class="r"><code>y_pred &lt;- ifelse(prob_pred &gt;= 0.5, 1, 0)</code></pre>
+<pre class="r"><code>cm &lt;- confusionMatrix(factor(test_set_cut$SECTOR_ORRIENTE), factor(y_pred), positive = &quot;1&quot;)
+
+cm</code></pre>
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction     0     1
+##          0 22610   175
+##          1  1608   271
+##                                           
+##                Accuracy : 0.9277          
+##                  95% CI : (0.9244, 0.9309)
+##     No Information Rate : 0.9819          
+##     P-Value [Acc &gt; NIR] : 1               
+##                                           
+##                   Kappa : 0.21            
+##                                           
+##  Mcnemar&#39;s Test P-Value : &lt;2e-16          
+##                                           
+##             Sensitivity : 0.60762         
+##             Specificity : 0.93360         
+##          Pos Pred Value : 0.14423         
+##          Neg Pred Value : 0.99232         
+##              Prevalence : 0.01808         
+##          Detection Rate : 0.01099         
+##    Detection Prevalence : 0.07618         
+##       Balanced Accuracy : 0.77061         
+##                                           
+##        &#39;Positive&#39; Class : 1               
+## </code></pre>
+</div>
+<div id="explicacion-del-matrix-de-confusión" class="section level4">
+<h4>Explicacion del Matrix de Confusión</h4>
+<p>El matrix es una tabla que muestra los valores actuales y los valores predichos. La imagen expone el diseño del matrix con los valores predichos en las filas, y los valores reales en los clomunas. Por lo tanto se sabe que la celuda en fila 1 columna 1 respresenta valores de 0 que se predicen como 0. Asimismo se sabe que la celuda en fila 2 columna 2 representa valores de 1 que se predicen como 1.</p>
+<p>Hay cuatro valores importantes que se puede sacar del matrix para dar información sobre su precisión.
+* Accuaracy
+* Kappa
+* Precision
+* Recall</p>
+<p>Vamos a analizarlos.</p>
+<div id="accuracy" class="section level5">
+<h5>Accuracy</h5>
+<p>El matrix tiene un accuracy de 0.929. Significa que 92.9% de los observaciones se classifican por el modelo correctamente.</p>
+</div>
+<div id="precision" class="section level5">
+<h5>Precision</h5>
+<p>Una precision de 64.21% significa que en todos los inmigrantes que se predicen vivir en el sector orriente, 64.21% realmente viven allá.</p>
+<pre class="r"><code>VerdadoPositivo = 287
+FalsoPositivo = 160
+FalsoNegativo = 1592
+ 
+precision &lt;- VerdadoPositivo/(VerdadoPositivo+FalsoPositivo)
+
+precision</code></pre>
+<pre><code>## [1] 0.6420582</code></pre>
+</div>
+<div id="recall" class="section level5">
+<h5>Recall</h5>
+<p>El valor de 15.27% para recall significa que 15.27% de los inmigrantes se han clasificado como alguien que vive en el sector oriente.</p>
+<pre class="r"><code>recall &lt;- VerdadoPositivo/(VerdadoPositivo+FalsoNegativo)
+
+recall</code></pre>
+<pre><code>## [1] 0.1527408</code></pre>
+</div>
+</div>
+<div id="kappa" class="section level4">
+<h4>Kappa</h4>
+<p>A puesto que los datos son desequilibrados con muchos mas obervaciones de inmigrantes que no viven en el setor orriente se puede usar el valor de kappa. Mide de qué tan bien se desempeñó el clasificador en comparación con qué tan bien se hubiera desempeñado simplemente por casualidad. Es un valor importante con datos desequilibrados. Puede tomar valores entre 0 y 1. Mas cerca a 1 significa que la clasificación en el model es mas precisa. Nuestro matrix tiene un kappa valor de 0.22. Significa que el modelo obtiene una precision de classificacion 22% mejor que la classificacion de una classificacion aleatoria (precision expextada de 90.84).Con una kappa de 0.22 el modelo tiene una precision de 92.8552 [90.84 + (((100 - 90.84) / 100) * 22)].</p>
+<p>Se puede leer mas sobre como caluclarl todo eso aca [<a href="https://stats.stackexchange.com/questions/82162/cohens-kappa-in-plain-english?noredirect=1&amp;lq=1" class="uri">https://stats.stackexchange.com/questions/82162/cohens-kappa-in-plain-english?noredirect=1&amp;lq=1</a>]</p>
+<p>La precison expectada es 90.84 y un precision de 100%, es decir 90.84 + (((100 - 90.84) / 100) * 22) = 92.8552.</p>
+</div>
+</div>
+</div>
