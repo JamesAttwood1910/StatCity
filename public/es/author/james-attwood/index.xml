@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>James Attwood | StatCity</title>
+    <link>/es/author/james-attwood/</link>
+      <atom:link href="/es/author/james-attwood/index.xml" rel="self" type="application/rss+xml" />
+    <description>James Attwood</description>
+    <generator>Source Themes Academic (https://sourcethemes.com/academic/)</generator><language>es</language>
+    <image>
+      <url>/es/author/james-attwood/avatar_hu20f1ae6f2637886f2426d9e5207b1d3d_2228191_270x270_fill_q90_lanczos_center.jpg</url>
+      <title>James Attwood</title>
+      <link>/es/author/james-attwood/</link>
+    </image>
+    
+  </channel>
+</rss>
